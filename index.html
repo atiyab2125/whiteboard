@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Image Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-2: #f1f5f9;
+      --text: #1f2937;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --border: #dbe3ee;
+      --danger: #b91c1c;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .toolbar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      font-weight: 700;
+      letter-spacing: .2px;
+      margin-right: auto;
+      white-space: nowrap;
+    }
+
+    .album-control,
+    .image-jump-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .image-jump-control select {
+      width: 116px;
+      max-width: 32vw;
+    }
+
+    select, button {
+      color: var(--text);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+    }
+
+    select {
+      max-width: min(48vw, 260px);
+      padding: 9px 34px 9px 11px;
+    }
+
+    button {
+      cursor: pointer;
+      min-height: 42px;
+      padding: 9px 14px;
+      transition: background .15s ease, border-color .15s ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: #e2e8f0;
+      border-color: #94a3b8;
+    }
+
+    button:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    button:disabled {
+      opacity: .38;
+      cursor: not-allowed;
+    }
+
+    .main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    .annotation-tools {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 9px 12px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .tool-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      margin-right: 2px;
+    }
+
+    .tool-button {
+      min-height: 36px;
+      padding: 6px 11px;
+      border-radius: 9px;
+      background: #f8fafc;
+    }
+
+    .tool-button.active {
+      border-color: var(--accent);
+      background: #dbeafe;
+      color: #1d4ed8;
+      box-shadow: 0 0 0 1px var(--accent) inset;
+    }
+
+    .swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+      border: 1px solid #94a3b8;
+      vertical-align: -1px;
+    }
+
+    .size-control {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .size-control input { width: 92px; accent-color: var(--accent); }
+    .size-value { min-width: 18px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+    .zoom-tools {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .zoom-tools button {
+      min-width: 42px;
+      padding: 8px 11px;
+    }
+
+    #zoomLevel {
+      min-width: 48px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stage {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #e9eef5;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      touch-action: none;
+      cursor: default;
+    }
+
+    .stage.zoomed { cursor: grab; }
+    .stage.dragging { cursor: grabbing; }
+
+    #viewer {
+      display: none;
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+      user-drag: none;
+      transform-origin: center center;
+      will-change: transform;
+      pointer-events: none;
+    }
+
+    #annotationCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      touch-action: none;
+      pointer-events: none;
+      transform-origin: center center;
+    }
+
+    .stage.annotating #annotationCanvas { pointer-events: auto; cursor: crosshair; }
+    .stage.erasing #annotationCanvas { pointer-events: auto; cursor: cell; }
+
+    .message {
+      max-width: 560px;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .message strong {
+      display: block;
+      color: var(--text);
+      margin-bottom: 6px;
+      font-size: 17px;
+    }
+
+    .message.error strong { color: var(--danger); }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 0 4px;
+    }
+
+    #imageCount {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .navigation {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .navigation button {
+      min-width: 132px;
+    }
+
+    .hint {
+      text-align: center;
+      color: #64748b;
+      font-size: 12px;
+      padding-bottom: 2px;
+    }
+
+    @media (min-width: 700px) {
+      .main { padding: 16px; }
+    }
+
+    @media (max-width: 520px) {
+      .toolbar { gap: 8px; padding: 8px; }
+      .brand { width: 100%; }
+      .album-control { flex: 1; }
+      .album-control select { flex: 1; max-width: none; min-width: 0; }
+      .image-jump-control { flex: 1; }
+      .image-jump-control select { flex: 1; width: auto; max-width: none; min-width: 0; }
+      .annotation-tools { gap: 6px; padding: 8px; }
+      .size-control input { width: 72px; }
+      .tool-button { min-height: 34px; padding: 5px 8px; }
+      .zoom-tools { gap: 4px; }
+      .zoom-tools button { min-width: 38px; min-height: 38px; padding: 6px 9px; }
+      #zoomLevel { min-width: 42px; }
+      .main { padding: 8px; gap: 7px; }
+      .navigation button { min-width: 0; flex: 1; min-height: 38px; padding: 7px 10px; }
+      .statusbar { font-size: 11px; gap: 6px; }
+      .hint { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand">Local Image Viewer</div>
+    <label class="album-control" for="albumSelect">
+      Album
+      <select id="albumSelect" aria-label="Choose album"></select>
+    </label>
+    <label class="image-jump-control" for="imageSelect">
+      Go to image
+      <select id="imageSelect" aria-label="Jump to image number"></select>
+    </label>
+    <div class="zoom-tools" aria-label="Image zoom controls">
+      <button id="zoomOutButton" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+      <span id="zoomLevel">100%</span>
+      <button id="zoomInButton" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="resetZoomButton" type="button" title="Fit image to screen" aria-label="Fit image to screen">Fit</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="stage" id="stage" aria-live="polite">
+      <img id="viewer" alt="Selected album image">
+      <canvas id="annotationCanvas" aria-label="Image annotation canvas"></canvas>
+      <div class="message" id="message">
+        <strong>Loading image…</strong>
+        Please wait.
+      </div>
+    </section>
+
+    <section class="annotation-tools" aria-label="Annotation tools">
+      <span class="tool-label">Annotate</span>
+      <button class="tool-button" id="penBlack" type="button" title="Black pen"><span class="swatch" style="background:#111827"></span>Black</button>
+      <button class="tool-button" id="penRed" type="button" title="Red pen"><span class="swatch" style="background:#dc2626"></span>Red</button>
+      <button class="tool-button" id="penBlue" type="button" title="Blue pen"><span class="swatch" style="background:#2563eb"></span>Blue</button>
+      <button class="tool-button" id="eraserButton" type="button" title="Erase annotations">⌫ Eraser</button>
+      <label class="size-control" for="penSize">Pen
+        <input id="penSize" type="range" min="1" max="24" value="4">
+        <span class="size-value" id="penSizeValue">4</span>
+      </label>
+      <label class="size-control" for="eraserSize">Eraser
+        <input id="eraserSize" type="range" min="6" max="60" value="24">
+        <span class="size-value" id="eraserSizeValue">24</span>
+      </label>
+      <button class="tool-button" id="clearAnnotations" type="button" title="Remove all annotations">Clear all</button>
+    </section>
+
+    <div class="statusbar">
+      <span id="albumLabel">Album: —</span>
+      <span id="imageCount">Image —</span>
+      <span id="fileLabel">—</span>
+    </div>
+
+    <nav class="navigation" aria-label="Image navigation">
+      <button id="prevButton" type="button">← Previous</button>
+      <button id="nextButton" type="button">Next →</button>
+    </nav>
+
+    <div class="hint">Choose an image number from the scrollable dropdown · Keyboard: ← / → navigate · + / − zoom · Drag to pan · Fit resets view <span style="color:red;"> Copyright Reserved - Atyab Ahmad</span></div>
+  </main>
+
+  <script>
+    "use strict";
+
+    /*
+      EDIT THIS LIST:
+      - name: label shown in the album dropdown
+      - folder: path relative to this index.html file
+      - start: first image number in this album
+      - end: last image number in this album (inclusive)
+
+      Example: start: 0, end: 249 means 0.jpg through 249.jpg.
+      Change these example ranges to match your actual albums.
+    */
+    const ALBUMS = [
+      { name: "Anish-LabManexp1to3", folder: "albums/Anish-LabManexp1to3", start: 0, end: 7 },
+      { name: "Anish-cLangExp6to10", folder: "albums/Anish-cLangExp6to10", start: 0, end: 11 },
+      { name: "Anish-cLangFULLnotes", folder: "albums/Anish-cLangFULLnotes", start: 0, end: 52 },
+	  { name: "AtyabExp4", folder: "albums/AtyabExp4", start: 0, end: 27 }
+    ];
+
+    const albumSelect = document.getElementById("albumSelect");
+    const imageSelect = document.getElementById("imageSelect");
+    const viewer = document.getElementById("viewer");
+    const message = document.getElementById("message");
+    const prevButton = document.getElementById("prevButton");
+    const nextButton = document.getElementById("nextButton");
+    const albumLabel = document.getElementById("albumLabel");
+    const imageCount = document.getElementById("imageCount");
+    const fileLabel = document.getElementById("fileLabel");
+    const stage = document.getElementById("stage");
+    const zoomInButton = document.getElementById("zoomInButton");
+    const zoomOutButton = document.getElementById("zoomOutButton");
+    const resetZoomButton = document.getElementById("resetZoomButton");
+    const zoomLevel = document.getElementById("zoomLevel");
+    const annotationCanvas = document.getElementById("annotationCanvas");
+    const annotationCtx = annotationCanvas.getContext("2d");
+    const penSize = document.getElementById("penSize");
+    const eraserSize = document.getElementById("eraserSize");
+    const penSizeValue = document.getElementById("penSizeValue");
+    const eraserSizeValue = document.getElementById("eraserSizeValue");
+    const annotationButtons = {
+      black: document.getElementById("penBlack"),
+      red: document.getElementById("penRed"),
+      blue: document.getElementById("penBlue"),
+      eraser: document.getElementById("eraserButton")
+    };
+
+    let activeTool = null;
+    let isAnnotating = false;
+    let annotationPointerId = null;
+
+    let albumIndex = 0;
+    let imageIndex = 0;
+    let requestId = 0;
+    let zoom = 1;
+    let panX = 0;
+    let panY = 0;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
+    let dragging = false;
+
+    // Per-album navigation information.
+    const albumState = ALBUMS.map(() => ({
+      lastValidIndex: null,
+      reachedEnd: false
+    }));
+
+    function imagePath(album, index) {
+      return `${album.folder}/${index}.jpg`;
+    }
+
+    function setMessage(title, detail = "", isError = false) {
+      viewer.style.display = "none";
+      message.style.display = "block";
+      message.classList.toggle("error", isError);
+      message.replaceChildren();
+
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      message.appendChild(strong);
+
+      if (detail) {
+        const description = document.createElement("div");
+        description.textContent = detail;
+        message.appendChild(description);
+      }
+    }
+
+    function applyViewTransform() {
+      viewer.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      annotationCanvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+      zoomOutButton.disabled = zoom <= 1;
+      zoomInButton.disabled = zoom >= 5;
+      resetZoomButton.disabled = zoom === 1 && panX === 0 && panY === 0;
+      stage.classList.toggle("zoomed", zoom > 1);
+    }
+
+    function resetView() {
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+      applyViewTransform();
+    }
+
+    function changeZoom(amount) {
+      const nextZoom = Math.min(5, Math.max(1, +(zoom + amount).toFixed(2)));
+      if (nextZoom === zoom) return;
+      zoom = nextZoom;
+      if (zoom === 1) {
+        panX = 0;
+        panY = 0;
+      }
+      applyViewTransform();
+    }
+
+    function updateControls() {
+      const album = ALBUMS[albumIndex];
+      const state = albumState[albumIndex];
+      const start = Number.isInteger(album.start) ? album.start : 0;
+      const end = Number.isInteger(album.end) ? album.end : (state.lastValidIndex ?? start);
+
+      prevButton.disabled = imageIndex <= start;
+      nextButton.disabled = imageIndex >= end;
+      imageSelect.value = String(imageIndex);
+
+      albumLabel.textContent = `Album: ${album.name}`;
+      imageCount.textContent = `Image ${imageIndex} of ${end}`;
+      fileLabel.textContent = `${imageIndex}.jpg`;
+    }
+
+    function populateImageNumbers() {
+      const album = ALBUMS[albumIndex];
+      const start = Number.isInteger(album.start) ? album.start : 0;
+      const end = Number.isInteger(album.end) ? album.end : start;
+      imageSelect.replaceChildren();
+
+      for (let number = start; number <= end; number++) {
+        const option = document.createElement("option");
+        option.value = String(number);
+        option.textContent = String(number);
+        imageSelect.appendChild(option);
+      }
+      imageSelect.disabled = end < start;
+    }
+
+    function showImage(index) {
+      const configuredAlbum = ALBUMS[albumIndex];
+      const start = Number.isInteger(configuredAlbum.start) ? configuredAlbum.start : 0;
+      const end = Number.isInteger(configuredAlbum.end) ? configuredAlbum.end : Number.MAX_SAFE_INTEGER;
+      if (index < start || index > end) return;
+
+      const currentAlbumIndex = albumIndex;
+      const currentAlbum = ALBUMS[currentAlbumIndex];
+      const state = albumState[currentAlbumIndex];
+      const thisRequest = ++requestId;
+
+      imageIndex = index;
+      clearAnnotations();
+      resetView();
+      updateControls();
+      setMessage("Loading image…", imagePath(currentAlbum, index));
+
+      // A new Image object is created only for the image requested now.
+      // No list of all album images is generated or preloaded.
+      const image = new Image();
+      image.onload = () => {
+        if (thisRequest !== requestId) return; // Ignore stale requests.
+
+        viewer.src = image.src;
+        viewer.alt = `${currentAlbum.name}, image ${index}`;
+        viewer.style.display = "block";
+        message.style.display = "none";
+        applyViewTransform();
+
+        state.lastValidIndex = Math.max(state.lastValidIndex ?? -1, index);
+        updateControls();
+      };
+
+      image.onerror = () => {
+        if (thisRequest !== requestId) return;
+
+        setMessage(
+          "Could not load this image",
+          `Check that this file exists and is named exactly: ${imagePath(currentAlbum, index)}`,
+          true
+        );
+        updateControls();
+      };
+
+      // Setting src starts loading this one file.
+      image.src = imagePath(currentAlbum, index);
+    }
+
+
+    function resizeAnnotationCanvas() {
+      const rect = stage.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const old = document.createElement("canvas");
+      old.width = annotationCanvas.width;
+      old.height = annotationCanvas.height;
+      if (old.width && old.height) old.getContext("2d").drawImage(annotationCanvas, 0, 0);
+      annotationCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+      annotationCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+      annotationCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (old.width && old.height) {
+        annotationCtx.drawImage(old, 0, 0, old.width, old.height, 0, 0, rect.width, rect.height);
+      }
+      annotationCtx.lineCap = "round";
+      annotationCtx.lineJoin = "round";
+    }
+
+    function clearAnnotations() {
+      const rect = stage.getBoundingClientRect();
+      annotationCtx.clearRect(0, 0, rect.width, rect.height);
+    }
+
+    function selectTool(tool) {
+      activeTool = tool;
+      stage.classList.toggle("annotating", ["black", "red", "blue"].includes(tool));
+      stage.classList.toggle("erasing", tool === "eraser");
+      for (const [name, button] of Object.entries(annotationButtons)) {
+        button.classList.toggle("active", name === tool);
+        button.setAttribute("aria-pressed", String(name === tool));
+      }
+      isAnnotating = Boolean(tool);
+    }
+
+    function canvasPoint(event) {
+      // Convert screen coordinates back into the canvas's untransformed stage space.
+      const rect = stage.getBoundingClientRect();
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      return {
+        x: centerX + (screenX - centerX - panX) / zoom,
+        y: centerY + (screenY - centerY - panY) / zoom
+      };
+    }
+
+    function startAnnotation(event) {
+      if (!activeTool || event.button !== 0 || !viewer.src || viewer.style.display === "none") return;
+      event.preventDefault();
+      annotationPointerId = event.pointerId;
+      annotationCanvas.setPointerCapture(event.pointerId);
+      const point = canvasPoint(event);
+      annotationCtx.beginPath();
+      annotationCtx.moveTo(point.x, point.y);
+      annotationCtx.globalCompositeOperation = activeTool === "eraser" ? "destination-out" : "source-over";
+      annotationCtx.strokeStyle = ({ black: "#111827", red: "#dc2626", blue: "#2563eb" })[activeTool] || "#111827";
+      annotationCtx.lineWidth = Number(activeTool === "eraser" ? eraserSize.value : penSize.value);
+      annotationCtx.lineTo(point.x + 0.01, point.y + 0.01);
+      annotationCtx.stroke();
+    }
+
+    function continueAnnotation(event) {
+      if (annotationPointerId !== event.pointerId || !activeTool) return;
+      event.preventDefault();
+      const point = canvasPoint(event);
+      annotationCtx.lineTo(point.x, point.y);
+      annotationCtx.stroke();
+    }
+
+    function endAnnotation(event) {
+      if (annotationPointerId !== event.pointerId) return;
+      annotationPointerId = null;
+      annotationCtx.closePath();
+      annotationCtx.globalCompositeOperation = "source-over";
+    }
+
+    annotationButtons.black.addEventListener("click", () => selectTool(activeTool === "black" ? null : "black"));
+    annotationButtons.red.addEventListener("click", () => selectTool(activeTool === "red" ? null : "red"));
+    annotationButtons.blue.addEventListener("click", () => selectTool(activeTool === "blue" ? null : "blue"));
+    annotationButtons.eraser.addEventListener("click", () => selectTool(activeTool === "eraser" ? null : "eraser"));
+    document.getElementById("clearAnnotations").addEventListener("click", clearAnnotations);
+    penSize.addEventListener("input", () => { penSizeValue.textContent = penSize.value; });
+    eraserSize.addEventListener("input", () => { eraserSizeValue.textContent = eraserSize.value; });
+    annotationCanvas.addEventListener("pointerdown", startAnnotation);
+    annotationCanvas.addEventListener("pointermove", continueAnnotation);
+    annotationCanvas.addEventListener("pointerup", endAnnotation);
+    annotationCanvas.addEventListener("pointercancel", endAnnotation);
+    window.addEventListener("resize", resizeAnnotationCanvas);
+    if ("ResizeObserver" in window) new ResizeObserver(resizeAnnotationCanvas).observe(stage);
+    resizeAnnotationCanvas();
+
+    function populateAlbums() {
+      if (ALBUMS.length === 0) {
+        albumSelect.disabled = true;
+        prevButton.disabled = true;
+        nextButton.disabled = true;
+        setMessage("No albums configured", "Add album folder names to the ALBUMS array in index.html.");
+        return;
+      }
+
+      for (const [index, album] of ALBUMS.entries()) {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = album.name;
+        albumSelect.appendChild(option);
+      }
+
+      albumSelect.value = "0";
+      albumIndex = 0;
+      populateImageNumbers();
+      imageIndex = Number.isInteger(ALBUMS[0].start) ? ALBUMS[0].start : 0;
+      showImage(imageIndex);
+    }
+
+    albumSelect.addEventListener("change", () => {
+      albumIndex = Number(albumSelect.value);
+      populateImageNumbers();
+      imageIndex = Number.isInteger(ALBUMS[albumIndex].start) ? ALBUMS[albumIndex].start : 0;
+      showImage(imageIndex);
+    });
+
+    imageSelect.addEventListener("change", () => {
+      const selectedIndex = Number(imageSelect.value);
+      if (Number.isInteger(selectedIndex)) showImage(selectedIndex);
+    });
+
+    prevButton.addEventListener("click", () => {
+      const album = ALBUMS[albumIndex];
+      const start = Number.isInteger(album.start) ? album.start : 0;
+      if (imageIndex > start) showImage(imageIndex - 1);
+    });
+
+    nextButton.addEventListener("click", () => {
+      const album = ALBUMS[albumIndex];
+      const end = Number.isInteger(album.end) ? album.end : imageIndex;
+      if (imageIndex < end) showImage(imageIndex + 1);
+    });
+
+    zoomInButton.addEventListener("click", () => changeZoom(0.25));
+    zoomOutButton.addEventListener("click", () => changeZoom(-0.25));
+    resetZoomButton.addEventListener("click", resetView);
+
+    // Prevent the browser's native image/text drag-and-drop behavior.
+    // The image itself has pointer-events:none, so the stage handles the drag.
+    viewer.draggable = false;
+    viewer.addEventListener("dragstart", (event) => event.preventDefault());
+    stage.addEventListener("dragstart", (event) => event.preventDefault());
+
+    // Drag to pan while zoomed. Pointer capture keeps movement events flowing
+    // even if the pointer leaves the stage while the mouse button is held.
+    stage.addEventListener("pointerdown", (event) => {
+      if (activeTool || zoom <= 1 || event.button !== 0) return;
+      event.preventDefault();
+      dragging = true;
+      dragStartX = event.clientX;
+      dragStartY = event.clientY;
+      panStartX = panX;
+      panStartY = panY;
+      stage.classList.add("dragging");
+
+      try {
+        stage.setPointerCapture(event.pointerId);
+      } catch (_) {
+        // Pointer capture may be unavailable in a few browser edge cases.
+      }
+    });
+
+    stage.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      event.preventDefault();
+      panX = panStartX + event.clientX - dragStartX;
+      panY = panStartY + event.clientY - dragStartY;
+      applyViewTransform();
+    });
+
+    function stopDragging(event) {
+      if (event && stage.hasPointerCapture?.(event.pointerId)) {
+        try {
+          stage.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+      }
+      dragging = false;
+      stage.classList.remove("dragging");
+    }
+
+    stage.addEventListener("pointerup", stopDragging);
+    stage.addEventListener("pointercancel", stopDragging);
+    stage.addEventListener("lostpointercapture", () => {
+      dragging = false;
+      stage.classList.remove("dragging");
+    });
+
+    document.addEventListener("keydown", (event) => {
+      // Avoid intercepting keys when the user is operating a form control.
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.target instanceof HTMLSelectElement || event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return;
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        changeZoom(0.25);
+      } else if (event.key === "-") {
+        event.preventDefault();
+        changeZoom(-0.25);
+      } else if (event.key === "0") {
+        resetView();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        if (!prevButton.disabled) prevButton.click();
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        if (!nextButton.disabled) nextButton.click();
+      }
+    });
+
+    applyViewTransform();
+    populateAlbums();
+  </script>
+</body>
+</html>
