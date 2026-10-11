@@ -25,7 +25,7 @@
       height: 100%;
       background: var(--bg);
       color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: Arial, "Segoe UI", sans-serif;
     }
 
     body {
@@ -77,6 +77,7 @@
     }
 
     select {
+      max-width: 48vw;
       max-width: min(48vw, 260px);
       padding: 9px 34px 9px 11px;
     }
@@ -93,7 +94,7 @@
       border-color: #94a3b8;
     }
 
-    button:focus-visible, select:focus-visible {
+    button:focus, select:focus {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
@@ -221,7 +222,10 @@
 
     #annotationCanvas {
       position: absolute;
-      inset: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
       width: 100%;
       height: 100%;
       z-index: 3;
@@ -364,7 +368,7 @@
       <button id="nextButton" type="button">Next →</button>
     </nav>
 
-    <div class="hint">Choose an image number from the scrollable dropdown · Keyboard: ← / → navigate · + / − zoom · Drag to pan · Fit resets view <span style="color:red;"> Copyright Reserved - Atyab Ahmad</span></div>
+    <div class="hint">Choose an image number from the scrollable dropdown · Keyboard: ← / → navigate · + / − zoom · Drag to pan · Fit resets view <span style="color:red;"> Copyright Reserved - Atyab Ahmad v2</span></div>
   </main>
 
   <script>
@@ -444,7 +448,7 @@
       viewer.style.display = "none";
       message.style.display = "block";
       message.classList.toggle("error", isError);
-      message.replaceChildren();
+      while (message.firstChild) message.removeChild(message.firstChild);
 
       const strong = document.createElement("strong");
       strong.textContent = title;
@@ -489,7 +493,7 @@
       const album = ALBUMS[albumIndex];
       const state = albumState[albumIndex];
       const start = Number.isInteger(album.start) ? album.start : 0;
-      const end = Number.isInteger(album.end) ? album.end : (state.lastValidIndex ?? start);
+      const end = Number.isInteger(album.end) ? album.end : (state.lastValidIndex !== null ? state.lastValidIndex : start);
 
       prevButton.disabled = imageIndex <= start;
       nextButton.disabled = imageIndex >= end;
@@ -504,7 +508,7 @@
       const album = ALBUMS[albumIndex];
       const start = Number.isInteger(album.start) ? album.start : 0;
       const end = Number.isInteger(album.end) ? album.end : start;
-      imageSelect.replaceChildren();
+      while (imageSelect.firstChild) imageSelect.removeChild(imageSelect.firstChild);
 
       for (let number = start; number <= end; number++) {
         const option = document.createElement("option");
@@ -544,7 +548,7 @@
         message.style.display = "none";
         applyViewTransform();
 
-        state.lastValidIndex = Math.max(state.lastValidIndex ?? -1, index);
+        state.lastValidIndex = Math.max(state.lastValidIndex !== null ? state.lastValidIndex : -1, index);
         updateControls();
       };
 
@@ -647,10 +651,44 @@
     document.getElementById("clearAnnotations").addEventListener("click", clearAnnotations);
     penSize.addEventListener("input", () => { penSizeValue.textContent = penSize.value; });
     eraserSize.addEventListener("input", () => { eraserSizeValue.textContent = eraserSize.value; });
-    annotationCanvas.addEventListener("pointerdown", startAnnotation);
-    annotationCanvas.addEventListener("pointermove", continueAnnotation);
-    annotationCanvas.addEventListener("pointerup", endAnnotation);
-    annotationCanvas.addEventListener("pointercancel", endAnnotation);
+    // Prefer Pointer Events, but fall back to touch/mouse events on older browsers.
+    if (window.PointerEvent) {
+      annotationCanvas.addEventListener("pointerdown", startAnnotation);
+      annotationCanvas.addEventListener("pointermove", continueAnnotation);
+      annotationCanvas.addEventListener("pointerup", endAnnotation);
+      annotationCanvas.addEventListener("pointercancel", endAnnotation);
+    } else {
+      function touchAsPointer(touch, originalEvent) {
+        return {
+          button: 0,
+          pointerId: touch.identifier + 2,
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+          preventDefault: function () { originalEvent.preventDefault(); }
+        };
+      }
+      annotationCanvas.addEventListener("touchstart", function (event) {
+        if (!event.changedTouches.length) return;
+        startAnnotation(touchAsPointer(event.changedTouches[0], event));
+      }, { passive: false });
+      annotationCanvas.addEventListener("touchmove", function (event) {
+        if (!event.changedTouches.length) return;
+        continueAnnotation(touchAsPointer(event.changedTouches[0], event));
+      }, { passive: false });
+      function finishTouch(event) {
+        if (!event.changedTouches.length) return;
+        endAnnotation(touchAsPointer(event.changedTouches[0], event));
+      }
+      annotationCanvas.addEventListener("touchend", finishTouch, { passive: false });
+      annotationCanvas.addEventListener("touchcancel", finishTouch, { passive: false });
+      annotationCanvas.addEventListener("mousedown", function (event) { startAnnotation(mouseAsPointer(event)); });
+      annotationCanvas.addEventListener("mousemove", function (event) { continueAnnotation(mouseAsPointer(event)); });
+      annotationCanvas.addEventListener("mouseup", function (event) { endAnnotation(mouseAsPointer(event)); });
+      function mouseAsPointer(event) {
+        return { button: event.button, pointerId: 1, clientX: event.clientX, clientY: event.clientY,
+          preventDefault: function () { event.preventDefault(); } };
+      }
+    }
     window.addEventListener("resize", resizeAnnotationCanvas);
     if ("ResizeObserver" in window) new ResizeObserver(resizeAnnotationCanvas).observe(stage);
     resizeAnnotationCanvas();
@@ -714,8 +752,8 @@
 
     // Drag to pan while zoomed. Pointer capture keeps movement events flowing
     // even if the pointer leaves the stage while the mouse button is held.
-    stage.addEventListener("pointerdown", (event) => {
-      if (activeTool || zoom <= 1 || event.button !== 0) return;
+    function startPan(event) {
+      if (activeTool || zoom <= 1 || (event.button !== undefined && event.button !== 0)) return;
       event.preventDefault();
       dragging = true;
       dragStartX = event.clientX;
@@ -723,38 +761,51 @@
       panStartX = panX;
       panStartY = panY;
       stage.classList.add("dragging");
-
-      try {
-        stage.setPointerCapture(event.pointerId);
-      } catch (_) {
-        // Pointer capture may be unavailable in a few browser edge cases.
+      if (event.pointerId !== undefined && stage.setPointerCapture) {
+        try { stage.setPointerCapture(event.pointerId); } catch (ignore) {}
       }
-    });
+    }
 
-    stage.addEventListener("pointermove", (event) => {
+    function movePan(event) {
       if (!dragging) return;
       event.preventDefault();
       panX = panStartX + event.clientX - dragStartX;
       panY = panStartY + event.clientY - dragStartY;
       applyViewTransform();
-    });
+    }
 
     function stopDragging(event) {
-      if (event && stage.hasPointerCapture?.(event.pointerId)) {
-        try {
-          stage.releasePointerCapture(event.pointerId);
-        } catch (_) {}
+      if (event && event.pointerId !== undefined && stage.hasPointerCapture && stage.hasPointerCapture(event.pointerId)) {
+        try { stage.releasePointerCapture(event.pointerId); } catch (ignore) {}
       }
       dragging = false;
       stage.classList.remove("dragging");
     }
 
-    stage.addEventListener("pointerup", stopDragging);
-    stage.addEventListener("pointercancel", stopDragging);
-    stage.addEventListener("lostpointercapture", () => {
-      dragging = false;
-      stage.classList.remove("dragging");
-    });
+    if (window.PointerEvent) {
+      stage.addEventListener("pointerdown", startPan);
+      stage.addEventListener("pointermove", movePan);
+      stage.addEventListener("pointerup", stopDragging);
+      stage.addEventListener("pointercancel", stopDragging);
+      stage.addEventListener("lostpointercapture", stopDragging);
+    } else {
+      function touchPanEvent(touch, originalEvent) {
+        return { clientX: touch.clientX, clientY: touch.clientY, button: 0,
+          preventDefault: function () { originalEvent.preventDefault(); } };
+      }
+      stage.addEventListener("touchstart", function (event) {
+        if (event.changedTouches.length) startPan(touchPanEvent(event.changedTouches[0], event));
+      }, { passive: false });
+      stage.addEventListener("touchmove", function (event) {
+        if (event.changedTouches.length) movePan(touchPanEvent(event.changedTouches[0], event));
+      }, { passive: false });
+      stage.addEventListener("touchend", stopDragging);
+      stage.addEventListener("touchcancel", stopDragging);
+      stage.addEventListener("mousedown", startPan);
+      stage.addEventListener("mousemove", movePan);
+      stage.addEventListener("mouseup", stopDragging);
+      window.addEventListener("mouseup", stopDragging);
+    }
 
     document.addEventListener("keydown", (event) => {
       // Avoid intercepting keys when the user is operating a form control.
